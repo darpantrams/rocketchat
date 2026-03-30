@@ -25,13 +25,13 @@ services:
     command:
       - -c
       - |
-        echo "=====> Waiting for MongoDB (mongodb:27017) to be ready before starting Rocket.Chat...";
+        echo "=====> Waiting for MongoDB (51.195.20.44:27018) to be ready before starting Rocket.Chat...";
         for i in $(seq 1 60); do
-          if nc -z mongodb 27017 >/dev/null 2>&1; then
+          if nc -z 51.195.20.44 27018 >/dev/null 2>&1; then
             echo "=====> MongoDB is up - starting Rocket.Chat";
             exec node main.js;
           fi;
-          echo "=====> MongoDB not ready yet, retrying in 5 seconds...";
+          echo "=====> MongoDB not ready yet (51.195.20.44:27018), retrying in 5 seconds...";
           sleep 5;
         done;
         echo "=====> Giving up waiting for MongoDB after 5 minutes";
