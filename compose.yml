@@ -21,6 +21,7 @@ services:
       - traefik.http.routers.rocketchat.entrypoints=websecure
       - traefik.http.routers.rocketchat.tls.certresolver=letsencrypt
       - traefik.http.services.rocketchat.loadbalancer.server.port=3000
+      - traefik.docker.network=dokploy-network
     expose:
       - "3000"
     networks:
@@ -82,10 +83,10 @@ services:
     restart: on-failure
     user: "0"
     environment:
-      MONGODB_REPLICA_SET_NAME: ${MONGODB_REPLICA_SET_NAME:-rs0}
-      MONGODB_PORT_NUMBER: ${MONGODB_PORT_NUMBER:-27017}
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/?directConnection=true}
-      MONGODB_ADVERTISED_HOSTNAME: ${MONGODB_ADVERTISED_HOSTNAME:-mongodb}
+      MONGODB_REPLICA_SET_NAME: rs0
+      MONGODB_PORT_NUMBER: 27017
+      MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
+      MONGODB_ADVERTISED_HOSTNAME: mongodb
     volumes:
       - ${MONGODB_HOST_PATH:-mongodb_data}:/data/db:rw
     networks:
@@ -112,15 +113,30 @@ services:
     volumes:
       - ${MONGODB_HOST_PATH:-mongodb_data}:/data/db:rw
     user: "${MONGODB_USER_ID:-1001}"
-    command: mongod --replSet rs0 --bind_ip_all
-    networks:
-      - dokploy-network
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        echo "=====> Waiting for /data/db to be owned by uid=$$MONGODB_USER_ID (mongodb user) ...";
+        for i in $(seq 1 60); do
+          owner="$$(stat -c %u /data/db 2>/dev/null || true)";
+          if [ "$$owner" = "$$MONGODB_USER_ID" ]; then
+            echo "=====> /data/db ownership OK ($$owner) - starting MongoDB with replSet rs0";
+            exec mongod --replSet rs0 --bind_ip_all;
+          fi;
+          echo "=====> /data/db owner is '$$owner' (expected $$MONGODB_USER_ID), retrying in 5 seconds...";
+          sleep 5;
+        done;
+        echo "=====> Giving up waiting for /data/db ownership after 5 minutes";
+        exit 1
     environment:
       MONGODB_USER_ID: ${MONGODB_USER_ID:-1001}
-      MONGODB_REPLICA_SET_NAME: ${MONGODB_REPLICA_SET_NAME:-rs0}
-      MONGODB_PORT_NUMBER: ${MONGODB_PORT_NUMBER:-27017}
-      MONGODB_ADVERTISED_HOSTNAME: ${MONGODB_ADVERTISED_HOSTNAME:-mongodb}
+      MONGODB_REPLICA_SET_NAME: rs0
+      MONGODB_PORT_NUMBER: 27017
+      MONGODB_ADVERTISED_HOSTNAME: mongodb
       ALLOW_EMPTY_PASSWORD: ${ALLOW_EMPTY_PASSWORD:-yes}
+    networks:
+      - dokploy-network
     logging:
       driver: "json-file"
     labels:
