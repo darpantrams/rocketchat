@@ -2,25 +2,29 @@ services:
   rocketchat:
     image: ${IMAGE:-registry.rocket.chat/rocketchat/rocket.chat}:${RELEASE:-8.0.1}
     restart: always
-    labels:
-      prometheus.io/scrape: "true"
-      prometheus.io/port: ${METRICS_PORT:-9458}
-      container_tag: "${COMPOSE_PROJECT_NAME:-rocketchat}#rocketchat"
     environment:
-      ROOT_URL: ${ROOT_URL:-http://localhost}
-      PORT: ${PORT:-3000}
+      ROOT_URL: https://chat.srv4.withtrams.com
+      PORT: 3000
+      MONGO_URL: mongodb://mongodb:27017/rocketchat?replicaSet=rs0
+      MONGO_OPLOG_URL: mongodb://mongodb:27017/local?replicaSet=rs0
       DEPLOY_METHOD: docker
       DEPLOY_PLATFORM: compose
       REG_TOKEN: ${REG_TOKEN:-}
       LICENSE_DEBUG: true
       OVERWRITE_SETTING_Prometheus_Enabled: true
       OVERWRITE_SETTING_Prometheus_Port: "${METRICS_PORT:-9458}"
-      MONGO_URL: ${MONGO_URL:-mongodb://mongodb:27017/rocketchat?replicaSet=rs0}
       TRANSPORTER: "${NATS_URL-monolith+nats://nats:4222}"
       INSTANCE_IP: "${INSTANCE_IP:-}"
-    # depends_on:
-    #   mongodb-init-container:
-    #     condition: service_completed_successfully
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rocketchat.rule=Host(`chat.srv4.withtrams.com`)
+      - traefik.http.routers.rocketchat.entrypoints=websecure
+      - traefik.http.routers.rocketchat.tls.certresolver=letsencrypt
+      - traefik.http.services.rocketchat.loadbalancer.server.port=3000
+    expose:
+      - "3000"
+    networks:
+      - dokploy-network
     entrypoint: sh
     command:
       - -c
@@ -36,20 +40,8 @@ services:
         done;
         echo "=====> Giving up waiting for MongoDB after 5 minutes";
         exit 1
-    expose:
-      - ${PORT:-3000}
-      - ${METRICS_PORT:-9458}
-    # ports:
-    #   - "${BIND_IP:-0.0.0.0}:${HOST_PORT:-3000}:${PORT:-3000}"
-    #   - "${BIND_IP:-0.0.0.0}:${METRICS_PORT:-9458}:${METRICS_PORT:-9458}"
     logging:
       driver: "json-file"
-    # healthcheck:
-    #   test: ["CMD", "nc", "-zv", "-w", "10", "rocketchat", "${PORT:-3000}"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 10
-    #   start_period: 30s
 
   nats:
     image: docker.io/nats:${NATS_VERSION:-2.11-alpine}
@@ -59,10 +51,13 @@ services:
       - 8222
       - 6222
     command: --http_port 8222
+    networks:
+      - dokploy-network
     logging:
       driver: "json-file"
     labels:
       container_tag: "${COMPOSE_PROJECT_NAME:-rocketchat}#nats"
+
   mongodb-fix-permission-container:
     image: docker.io/mongodb/mongodb-community-server:${MONGODB_VERSION:-8.2}-ubi8
     restart: on-failure
@@ -71,6 +66,8 @@ services:
       - ${MONGODB_HOST_PATH:-mongodb_data}:/data/db:rw
     environment:
       MONGODB_USER_ID: ${MONGODB_USER_ID:-1001}
+    networks:
+      - dokploy-network
     entrypoint: |
       sh -xc '
         owner="$$(stat -c %u /data/db)";
@@ -91,6 +88,8 @@ services:
       MONGODB_ADVERTISED_HOSTNAME: ${MONGODB_ADVERTISED_HOSTNAME:-mongodb}
     volumes:
       - ${MONGODB_HOST_PATH:-mongodb_data}:/data/db:rw
+    networks:
+      - dokploy-network
     logging:
       driver: "json-file"
     labels:
@@ -113,22 +112,9 @@ services:
     volumes:
       - ${MONGODB_HOST_PATH:-mongodb_data}:/data/db:rw
     user: "${MONGODB_USER_ID:-1001}"
-    entrypoint:
-      - sh
-      - -ec
-      - |
-        echo "=====> Waiting for /data/db to be owned by uid=$$MONGODB_USER_ID (mongodb user) ...";
-        for i in $(seq 1 60); do
-          owner="$$(stat -c %u /data/db 2>/dev/null || true)";
-          if [ "$$owner" = "$$MONGODB_USER_ID" ]; then
-            echo "=====> /data/db ownership OK ($$owner) - starting MongoDB";
-            exec mongod --replSet "$$MONGODB_REPLICA_SET_NAME" --bind_ip_all;
-          fi;
-          echo "=====> /data/db owner is '$$owner' (expected $$MONGODB_USER_ID), retrying in 5 seconds...";
-          sleep 5;
-        done;
-        echo "=====> Giving up waiting for /data/db ownership after 5 minutes";
-        exit 1
+    command: mongod --replSet rs0 --bind_ip_all
+    networks:
+      - dokploy-network
     environment:
       MONGODB_USER_ID: ${MONGODB_USER_ID:-1001}
       MONGODB_REPLICA_SET_NAME: ${MONGODB_REPLICA_SET_NAME:-rs0}
@@ -139,6 +125,10 @@ services:
       driver: "json-file"
     labels:
       container_tag: "${COMPOSE_PROJECT_NAME:-rocketchat}#mongodb"
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   mongodb_data: {driver: local}
